@@ -3,36 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
-    <title>S-PULSE AR Photo Frame</title>
+    <title>エスパルス ARフォトフレーム</title>
     <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
     <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
     <style>
         body { margin: 0; overflow: hidden; font-family: sans-serif; background-color: #000; }
         
-        /* 📹 カメラ映像を画面全体に広げる */
-        video {
-            width: 100vw !important;
-            height: 100vh !important;
-            object-fit: cover !important;
-            position: absolute;
-            top: 0; left: 0;
-        }
-
-        /* 🖼️ フレームも画面サイズ（100vw×100vh）に完全に一致させる */
+        /* 1. 【画面表示の設定】横幅を100%固定し、上下ははみ出させる設定 */
         #ar-frame-container {
             position: fixed;
             top: 0; left: 0;
             width: 100vw; height: 100vh;
             z-index: 10;
             pointer-events: none; 
+            display: flex;
+            justify-content: center;
+            align-items: center;
         }
         #ar-frame {
-            width: 100%; 
-            height: 100%;
-            object-fit: cover; 
+            width: 100vw;  /* 横幅をスマホ画面に100%固定 */
+            height: 100vh;
+            object-fit: cover; /* 比率を保ったまま、画面いっぱいに広げる（上下がはみ出る） */
         }
 
-        /* 📸 撮影ボタン（エスパルスオレンジ） */
+        /* 📸 シャッターボタン（エスパルスオレンジ） */
         #shutter-btn {
             position: fixed;
             bottom: 30px; left: 50%;
@@ -72,7 +66,7 @@
             transform: scale(0.9);
         }
 
-        /* 🖼️ 撮影後の写真ポップアップ表示 */
+        /* 🖼️ 撮影後の写真ポップアップ表示（長押し保存用） */
         #result-popup {
             display: none;
             position: fixed;
@@ -86,58 +80,42 @@
         }
         #result-img {
             max-width: 90%;
-            max-height: 65%;
+            max-height: 70%;
             box-shadow: 0 4px 20px rgba(0,0,0,0.5);
             border-radius: 8px;
-            object-fit: contain;
         }
         .popup-text {
             color: white;
-            font-size: 14px;
+            font-size: 16px;
             font-weight: bold;
             margin: 15px 0;
             text-align: center;
-            line-height: 1.5;
         }
-        
-        /* ボタンエリア */
-        .popup-buttons {
-            display: flex;
-            gap: 15px;
-            margin-top: 10px;
-        }
-        .btn {
-            padding: 12px 25px;
+        #close-btn {
+            background: #ff7f00;
+            color: white;
+            border: none;
+            padding: 10px 25px;
             font-size: 14px;
-            border-radius: 25px;
+            border-radius: 20px;
             cursor: pointer;
             font-weight: bold;
-            border: none;
         }
-        .btn-main { background: #ff7f00; color: white; }
-        .btn-sub { background: #fff; color: #333; }
     </style>
 </head>
 <body>
 
     <div id="ar-frame-container">
-        <img id="ar-frame" src="frame.png" alt="AR Frame" crossOrigin="anonymous">
+        <img id="ar-frame" src="frame.png" alt="ARフォトフレーム" crossOrigin="anonymous">
     </div>
 
     <button id="shutter-btn"></button>
-    
     <button id="switch-camera-btn">🔄</button>
 
     <div id="result-popup">
-        <p class="popup-text">
-            「写真に保存」ボタンから保存するか、<br>
-            画像を長押しして保存してください！
-        </p>
+        <p class="popup-text">画像を長押しして<br>「"写真"に追加」や「画像を保存」を<br>選んで保存してください！</p>
         <img id="result-img" src="" alt="撮影された写真">
-        <div class="popup-buttons">
-            <button class="btn btn-sub" onclick="closePopup()">もう一度撮る</button>
-            <button id="share-btn" class="btn btn-main">写真に保存</button>
-        </div>
+        <button id="close-btn" onclick="閉じるポップアップ()">もう一度撮る</button>
     </div>
 
     <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;" vr-mode-ui="enabled: false">
@@ -145,184 +123,102 @@
     </a-scene>
 
     <script>
-        const shutterBtn = document.getElementById('shutter-btn');
-        const switchCameraBtn = document.getElementById('switch-camera-btn');
-        const popup = document.getElementById('result-popup');
-        const resultImg = document.getElementById('result-img');
-        const shareBtn = document.getElementById('share-btn');
+        const シャッターボタン = document.getElementById('shutter-btn');
+        const カメラ切り替えボタン = document.getElementById('switch-camera-btn');
+        const ポップアップ = document.getElementById('result-popup');
+        const 結果画像 = document.getElementById('result-img');
         
-        let currentFacingMode = 'environment';
-        let blobData = null; // シェア用にデータを一時保存する変数
+        let 現在のカメラモード = 'environment'; // 初期状態は外カメラ（背面カメラ）
 
-        // 🔊 外部ファイル不要！「カシャッ」というシャッター音を生成する関数
-        function playShutterSound() {
-            try {
-                const ctx = new (window.AudioContext || window.webkitAudioContext)();
-                const bufferSize = ctx.sampleRate * 0.1;
-                const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-                const data = buffer.getChannelData(0);
-                
-                // ホワイトノイズを生成
-                for (let i = 0; i < bufferSize; i++) { data[i] = Math.random() * 2 - 1; }
-                
-                const noise = ctx.createBufferSource();
-                noise.buffer = buffer;
-                
-                // 高音だけを通して「カシャッ」の空気感を再現
-                const filter = ctx.createBiquadFilter();
-                filter.type = 'highpass';
-                filter.frequency.value = 1200;
-                
-                // 音量を急激に小さくしてシャッターの切れ味を再現
-                const gain = ctx.createGain();
-                gain.gain.setValueAtTime(0.3, ctx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
-                
-                noise.connect(filter);
-                filter.connect(gain);
-                gain.connect(ctx.destination);
-                noise.start();
-            } catch (e) {
-                console.log("AudioContext blocked or not supported");
+        // 📸 シャッターボタンを押した時の処理
+        シャッターボタン.addEventListener('click', () => {
+            const ビデオ要素 = document.querySelector('video');
+            const フレーム画像 = document.getElementById('ar-frame');
+
+            if (!ビデオ要素) return;
+
+            const キャンバス = document.createElement('canvas');
+            const コンテキスト = キャンバス.getContext('2d');
+
+            キャンバス.width = ビデオ要素.videoWidth;
+            キャンバス.height = ビデオ要素.videoHeight;
+
+            // 自撮り（内カメラ）の時は、直感的に左右反転（鏡像）させて描画する
+            if (現在のカメラモード === 'user') {
+                コンテキスト.translate(キャンバス.width, 0);
+                コンテキスト.scale(-1, 1);
             }
-        }
 
-        // 📸 シャッターボタンの処理
-        shutterBtn.addEventListener('click', () => {
-            const video = document.querySelector('video');
-            const frameImg = document.getElementById('ar-frame');
+            // 1. まず背景にカメラ映像を描画
+            コンテキスト.drawImage(ビデオ要素, 0, 0, キャンバス.width, キャンバス.height);
 
-            if (!video) return;
+            // 反転状態を元に戻してフレームを描画（フレームは反転させない）
+            if (現在のカメラモード === 'user') {
+                コンテキスト.setTransform(1, 0, 0, 1, 0, 0);
+            }
+
+            // 2. 【写真合成】横幅を100%基準にし、上下をはみ出させてカットする計算
+            const 描画幅 = キャンバス.width;
+            const 描画高 = キャンバス.width * (フレーム画像.naturalHeight / frameImg.naturalWidth);
             
-            // シャッター音を鳴らす
-            playShutterSound();
+            const オフセットX = 0;
+            const オフセットY = (キャンバス.height - 描画高) / 2;
 
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
+            // 計算したサイズでフレームを上に重ねて描画
+            コンテキスト.drawImage(フレーム画像, オフセットX, オフセットY, 描画幅, 描画高);
 
-            const screenRatio = window.innerWidth / window.innerHeight;
-            
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoWidth / screenRatio;
-
-            // ① カメラ映像の切り抜き描画
-            const videoRatio = video.videoWidth / video.videoHeight;
-            let sx, sy, sw, sh;
-
-            if (videoRatio > screenRatio) {
-                sh = video.videoHeight;
-                sw = video.videoHeight * screenRatio;
-                sx = (video.videoWidth - sw) / 2;
-                sy = 0;
-            } else {
-                sw = video.videoWidth;
-                sh = video.videoWidth / screenRatio;
-                sx = 0;
-                sy = (video.videoHeight - sh) / 2;
-            }
-
-            if (currentFacingMode === 'user') {
-                ctx.translate(canvas.width, 0);
-                ctx.scale(-1, 1);
-            }
-
-            ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-
-            if (currentFacingMode === 'user') {
-                ctx.setTransform(1, 0, 0, 1, 0, 0);
-            }
-
-            // ② フレーム画像の切り抜き描画
-            const frameRatio = frameImg.naturalWidth / frameImg.naturalHeight;
-            let fx, fy, fw, fh;
-
-            if (frameRatio > screenRatio) {
-                fh = frameImg.naturalHeight;
-                fw = frameImg.naturalHeight * screenRatio;
-                fx = (frameImg.naturalWidth - fw) / 2;
-                fy = 0;
-            } else {
-                fw = frameImg.naturalWidth;
-                fh = frameImg.naturalWidth / screenRatio;
-                fx = 0;
-                fy = (frameImg.naturalHeight - fh) / 2;
-            }
-
-            ctx.drawImage(frameImg, fx, fy, fw, fh, 0, 0, canvas.width, canvas.height);
-
-            // ③ 画面への表示と、Web Share API用のデータ変換
             try {
-                const dataUrl = canvas.toDataURL('image/png');
-                resultImg.src = dataUrl;
-                popup.style.display = 'flex';
-
-                // 保存ボタンで使うためのBlob形式に変換して保持
-                canvas.toBlob((blob) => { blobData = blob; }, 'image/png');
-            } catch (err) {
+                結果画像.src = キャンバス.toDataURL('image/png');
+                ポップアップ.style.display = 'flex';
+            } catch (エラー) {
                 alert('エラーが発生しました。スクリーンショットでの撮影をお試しください。');
+                console.error(エラー);
             }
         });
 
-        // 📥「写真に保存 / シェア」ボタンの処理 (Web Share API)
-        shareBtn.addEventListener('click', async () => {
-            if (!blobData) return;
-            const file = new File([blobData], "s-pulse-ar-photo.png", { type: "image/png" });
-            
-            // ブラウザがファイル共有に対応しているか判定
-            if (navigator.canShare && navigator.canShare({ files: [file] })) {
-                try {
-                    await navigator.share({
-                        files: [file],
-                        title: 'エスパルス ARフォト',
-                        text: 'エスパルスARフォトフレームで撮影したよ！ #spulse'
-                    });
-                } catch (err) {
-                    if (err.name !== 'AbortError') alert('保存・共有に失敗しました。');
-                }
-            } else {
-                // LINE内ブラウザやPCブラウザなど非対応の場合のフォールバック
-                const newTab = window.open();
-                newTab.document.write(`<img src="${resultImg.src}" style="max-width:100%;">`);
-                alert('お使いのブラウザは直接保存ボタンに対応していません。開いた別タブから画像を長押しして保存してください。');
-            }
-        });
+        // 🔄 カメラ切り替えボタンを押した時の処理
+        カメラ切り替えボタン.addEventListener('click', () => {
+            const シーン = document.querySelector('a-scene');
+            if (!シーン || !シーン.systems.arjs) return;
 
-        // 🔄 カメラ切り替え処理
-        switchCameraBtn.addEventListener('click', () => {
-            currentFacingMode = (currentFacingMode === 'environment') ? 'user' : 'environment';
+            // カメラモードを反転（外カメラ ↔ 内カメラ）
+            現在のカメラモード = (現在のカメラモード === 'environment') ? 'user' : 'environment';
 
-            const video = document.querySelector('video');
-            if (video && video.srcObject) {
-                video.srcObject.getTracks().forEach(track => track.stop());
+            // 既存のWebcamストリームを取得して停止する
+            const ビデオ要素 = document.querySelector('video');
+            if (ビデオ要素 && ビデオ要素.srcObject) {
+                ビデオ要素.srcObject.getTracks().forEach(トラック => トラック.stop());
             }
 
+            // 新しい設定でカメラを再リクエストする
             navigator.mediaDevices.getUserMedia({
                 audio: false,
                 video: {
-                    facingMode: currentFacingMode,
+                    facingMode: 現在のカメラモード,
                     width: { ideal: 1280 },
                     height: { ideal: 720 }
                 }
-            }).then((stream) => {
-                if (video) {
-                    video.srcObject = stream;
-                    video.play();
+            }).then((ストリーム) => {
+                if (ビデオ要素) {
+                    ビデオ要素.srcObject = ストリーム;
+                    ビデオ要素.play();
                     
-                    if (currentFacingMode === 'user') {
-                        video.style.transform = 'scaleX(-1)';
+                    // 内カメラの時は画面上のプレビュー映像も鏡（ミラー）表示にする
+                    if (現在のカメラモード === 'user') {
+                        ビデオ要素.style.transform = 'scaleX(-1)';
                     } else {
-                        video.style.transform = 'scaleX(1)';
+                        ビデオ要素.style.transform = 'scaleX(1)';
                     }
                 }
-            }).catch((err) => {
+            }).catch((エラー) => {
                 alert('カメラの切り替えに失敗しました。');
-                console.error(err);
+                console.error(エラー);
             });
         });
 
-        function closePopup() {
-            popup.style.display = 'none';
-            blobData = null; // データをクリア
+        // ポップアップを閉じる処理
+        function 閉じるポップアップ() {
+            ポップアップ.style.display = 'none';
         }
     </script>
 </body>
