@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <title>S-PULSE AR Photo Frame</title>
+    <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: sans-serif; background-color: #000; }
+        
+        /* iOS Safari等でのカメラ全画面表示対策 */
+        video {
+            width: 100vw !important;
+            height: 100vh !important;
+            object-fit: cover !important;
+            position: absolute;
+            top: 0; left: 0;
+        }
+
+        /* 🖼️ フレーム表示（画面の見た目と保存時のズレを防ぐため、CSSもobject-fit: coverに統一） */
+        #ar-frame-container {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100vw; height: 100vh;
+            z-index: 10;
+            pointer-events: none; 
+        }
+        #ar-frame {
+            width: 100%; height: 100%;
+            object-fit: cover; 
+        }
+
+        /* 🍊 UIコントローラーエリア */
+        .ui-container {
+            position: fixed;
+            bottom: 30px; left: 0; width: 100%;
+            display: flex; justify-content: center; align-items: center;
+            z-index: 20;
+            gap: 30px;
+        }
+
+        /* 🔄 カメラ切り替えボタン */
+        .sub-btn {
+            width: 50px; height: 50px;
+            background-color: rgba(0, 0, 0, 0.6);
+            border: 2px solid #fff;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex; justify-content: center; align-items: center;
+            outline: none;
+        }
+        .sub-btn svg { width: 24px; height: 24px; fill: white; }
+
+        /* 📸 撮影ボタン */
+        #shutter-btn {
+            width: 80px; height: 80px;
+            background-color: rgba(255, 255, 255, 0.9);
+            border: 6px solid #ff7f00; /* エスパルスオレンジ */
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            outline: none;
+            transition: transform 0.1s;
+        }
+        #shutter-btn:active { transform: scale(0.9); }
+
+        /* ⏳ ローディング画面（エスパルスカラー） */
+        #loading-screen {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background-color: #ff7f00; color: white;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            z-index: 100; font-weight: bold; font-size: 18px;
+            transition: opacity 0.5s ease;
+        }
+        .spinner {
+            width: 50px; height: 50px; border: 5px solid rgba(255,255,255,0.3);
+            border-radius: 50%; border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite; margin-bottom: 20px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* 🖼️ 撮影後のポップアップ */
+        #result-popup {
+            display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(0,0,0,0.95); z-index: 30;
+            justify-content: center; align-items: center; flex-direction: column;
+        }
+        #result-img {
+            max-width: 85%; max-height: 65%;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.6); border-radius: 8px;
+        }
+        .popup-text {
+            color: white; font-size: 14px; line-height: 1.6; margin: 15px 0; text-align: center;
+        }
+        .popup-buttons { display: flex; gap: 15px; }
+        .btn {
+            padding: 12px 25px; font-size: 14px; border-radius: 25px;
+            cursor: pointer; font-weight: bold; border: none;
+        }
+        .btn-main { background: #ff7f00; color: white; }
+        .btn-sub { background: #fff; color: #333; }
+    </style>
+</head>
+<body>
+
+    <div id="loading-screen">
+        <div class="spinner"></div>
+        <div>S-PULSE AR CAMERA 起動中...</div>
+    </div>
+
+    <div id="ar-frame-container">
+        <img id="ar-frame" src="frame.png" alt="AR Frame" crossOrigin="anonymous">
+    </div>
+
+    <div class="ui-container">
+        <button id="switch-camera-btn" class="sub-btn" title="カメラ切り替え">
+            <svg viewBox="0 0 24 24"><path d="M19 8l-4 4h3c0 3.31-2.69 6-6 6-1.01 0-1.97-.25-2.8-.7l-1.46 1.46C8.97 19.54 10.43 20 12 20c4.42 0 8-3.58 8-8h3l-4-4zM6 12c0-3.31 2.69-6 6-6 1.01 0 1.97.25 2.8.7l1.46-1.46C15.03 4.46 13.57 4 12 4c-4.42 0-8 3.58-8 8H1l4 4 4-4H6z"/></svg>
+        </button>
+        
+        <button id="shutter-btn"></button>
+        
+        <div style="width:50px;"></div>
+    </div>
+
+    <div id="result-popup">
+        <p class="popup-text">
+            「シェア・保存」ボタンから保存するか、<br>
+            画像を長押しして「写真に追加」を選んでください！
+        </p>
+        <img id="result-img" src="" alt="撮影された写真">
+        <div class="popup-buttons">
+            <button class="btn btn-sub" onclick="closePopup()">もう一度撮る</button>
+            <button id="share-btn" class="btn btn-main">シェア・保存</button>
+        </div>
+    </div>
+
+    <a-scene embedded arjs="sourceType: webcam; debugUIEnabled: false;" vr-mode-ui="enabled: false">
+        <a-entity camera></a-entity>
+    </a-scene>
+
+    <script>
+        const shutterBtn = document.getElementById('shutter-btn');
+        const switchBtn = document.getElementById('switch-camera-btn');
+        const popup = document.getElementById('result-popup');
+        const resultImg = document.getElementById('result-img');
+        const shareBtn = document.getElementById('share-btn');
+        const loadingScreen = document.getElementById('loading-screen');
+
+        let currentFacingMode = "environment"; // デフォルトはアウトカメラ
+        let blobData = null; // シェア用のデータ保持
+
+        // 1. ローディング画面の解除（カメラ映像の初期化を待つ）
+        window.addEventListener('camera-init', () => {
+            setTimeout(() => {
+                loadingScreen.style.opacity = '0';
+                setTimeout(() => loadingScreen.style.display = 'none', 500);
+            }, 1000);
+        });
+
+        // 2. 音声ファイル不要！ピピッ・カシャッを再現するシンセサイザーシャッター音
+        function playShutterSound() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // 白ノイズ（カシャッという布擦れ音のベース）
+                const bufferSize = ctx.sampleRate * 0.1;
+                const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) { data[i] = Math.random() * 2 - 1; }
+                
+                const noise = ctx.createBufferSource();
+                noise.buffer = buffer;
+                
+                const filter = ctx.createBiquadFilter();
+                filter.type = 'highpass';
+                filter.frequency.value = 1000;
+                
+                const gain = ctx.createGain();
+                gain.gain.setValueAtTime(0.3, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+                
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(ctx.destination);
+                noise.start();
+            } catch (e) {
+                console.log("AudioContext not supported or blocked");
+            }
+        }
+
+        // 3. インカメ / アウトカメラ 切り替え処理
+        switchBtn.addEventListener('click', () => {
+            const scene = document.querySelector('a-scene');
+            const arToolkit = scene.systems['arjs'] ? scene.systems['arjs']._arToolkitContext : null;
+            
+            // 次のカメラ向きを決定
+            currentFacingMode = (currentFacingMode === "environment") ? "user" : "environment";
+            
+            // 既存のカメラ配信ストリームを停止してリロード
+            const video = document.querySelector('video');
+            if (video && video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+            }
+
+            // AR.jsのカメラソース設定を書き換えて再起動
+            navigator.mediaDevices.getUserMedia({
+                video: { facingMode: currentFacingMode }
+            }).then(stream => {
+                if (video) {
+                    video.srcObject = stream;
+                    video.play();
+                }
+            }).catch(err => {
+                alert("カメラの切り替えに失敗しました。");
+            });
+        });
+
+        // 4. 【高精度】画面の見た目通りに切り取る写真合成ロジック
+        shutterBtn.addEventListener('click', () => {
+            const video = document.querySelector('video');
+            const frameImg = document.getElementById('ar-frame');
+
+            if (!video) return;
+            playShutterSound();
+
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // 写真のベースサイズをビデオに合わせる
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            // 自撮り（インカメ）の場合は左右反転させて鏡写しを直す
+            if (currentFacingMode === "user") {
+                ctx.translate(canvas.width, 0);
+                ctx.scale(-1, 1);
+            }
+
+            // ① ビデオ映像を描画
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // インカメの反転設定を元に戻す（フレームは反転させないため）
+            if (currentFacingMode === "user") {
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+            }
+
+            // ② CSSの「object-fit: cover」のトリミング計算を完全にCanvas上で再現
+            const canvasRatio = canvas.width / canvas.height;
+            const frameRatio = frameImg.naturalWidth / frameImg.naturalHeight;
+
+            let drawWidth, drawHeight, offsetX, offsetY;
+
+            if (canvasRatio > frameRatio) {
+                // ビデオの方が横長（上下が余るためフレームを横に広げて上下カット）
+                drawWidth = canvas.width;
+                drawHeight = canvas.width / frameRatio;
+                offsetX = 0;
+                offsetY = (canvas.height - drawHeight) / 2;
+            } else {
+                // ビデオの方が縦長（スマホ画面。左右が余るためフレームを縦に広げて左右カット）
+                drawWidth = canvas.height * frameRatio;
+                drawHeight = canvas.height;
+                offsetX = (canvas.width - drawWidth) / 2;
+                offsetY = 0;
+            }
+
+            // 計算したサイズでフレームを描画
+            ctx.drawImage(frameImg, offsetX, offsetY, drawWidth, drawHeight);
+
+            // ③ 表示とデータ変換
+            try {
+                const dataUrl = canvas.toDataURL('image/png');
+                resultImg.src = dataUrl;
+                popup.style.display = 'flex';
+
+                // OSの標準シェア機能用にBlobデータ化
+                canvas.toBlob((blob) => { blobData = blob; }, 'image/png');
+
+            } catch (err) {
+                alert('エラーが発生しました。CORS設定を確認するか、スクリーンショットをお試しください。');
+                console.error(err);
+            }
+        });
+
+        // 5. Web Share API を使ったスマート保存・シェア
+        shareBtn.addEventListener('click', async () => {
+            if (!blobData) return;
+            const file = new File([blobData], "s-pulse-ar-photo.png", { type: "image/png" });
+            
+            // ブラウザがファイル共有(Web Share API)に対応しているか確認
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                try {
+                    await navigator.share({
+                        files: [file],
+                        title: 'S-PULSE AR Photo',
+                        text: 'エスパルスARフォトフレームで撮影したよ！ #spulse'
+                    });
+                } catch (err) {
+                    // ユーザーキャンセル以外の場合にエラーを出す
+                    if(err.name !== 'AbortError') alert('共有に失敗しました。');
+                }
+            } else {
+                // PCや未対応ブラウザの場合は、簡易的に別タブで画像を開いてダウンロードを促す
+                const newTab = window.open();
+                newTab.document.write(`<img src="${resultImg.src}" style="max-width:100%;">`);
+                alert('お使いのブラウザは直接保存ボタンに対応していません。画像を長押しするか、開いたページから保存してください。');
+            }
+        });
+
+        function closePopup() {
+            popup.style.display = 'none';
+            blobData = null;
+        }
+    </script>
+</body>
+</html>
