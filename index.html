@@ -9,22 +9,28 @@
     <style>
         body { margin: 0; overflow: hidden; font-family: sans-serif; background-color: #000; }
         
-        /* 1. 【画面表示の修正】スマホ画面内にフレーム全体がピッタリ収まる設定（削れなし） */
+        /* 📹 カメラ映像を画面全体に広げる */
+        video {
+            width: 100vw !important;
+            height: 100vh !important;
+            object-fit: cover !important;
+            position: absolute;
+            top: 0; left: 0;
+        }
+
+        /* 🖼️ 【画面表示】フレームも画面サイズ（100vw×100vh）に完全に一致させる */
         #ar-frame-container {
             position: fixed;
             top: 0; left: 0;
             width: 100vw; height: 100vh;
             z-index: 10;
             pointer-events: none; 
-            display: flex;
-            justify-content: center;
-            align-items: center;
         }
         #ar-frame {
             width: 100%; 
             height: 100%;
-            /* containに変更することで、フレームの上下左右が一切削られずに画面に収まります */
-            object-fit: contain; 
+            /* coverにすることで、スマホの画面比率ぴったりに引き伸ばし・トリミングされます */
+            object-fit: cover; 
         }
 
         /* 📸 撮影ボタン（エスパルスオレンジ） */
@@ -81,9 +87,10 @@
         }
         #result-img {
             max-width: 90%;
-            max-height: 70%;
+            max-height: 75%;
             box-shadow: 0 4px 20px rgba(0,0,0,0.5);
             border-radius: 8px;
+            object-fit: contain;
         }
         .popup-text {
             color: white;
@@ -130,7 +137,7 @@
         const popup = document.getElementById('result-popup');
         const resultImg = document.getElementById('result-img');
         
-        let currentFacingMode = 'environment'; // 初期状態は外カメラ
+        let currentFacingMode = 'environment';
 
         // 📸 シャッターボタンの処理
         shutterBtn.addEventListener('click', () => {
@@ -142,46 +149,66 @@
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
 
+            // 🌟【最重要】保存する写真の比率を、カメラではなく「スマホ画面の比率(window.innerWidth/innerHeight)」にする
+            const screenRatio = window.innerWidth / window.innerHeight;
+            
+            // ベース解像度は高めに保つため、ビデオの横幅を基準にスマホ画面比率のキャンバスを作成
             canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+            canvas.height = video.videoWidth / screenRatio;
 
-            // 自撮り（内カメラ）の時は、直感的に左右反転（鏡像）させて描画する
+            // ① カメラ映像を「スマホ画面で見えている範囲」だけ切り抜いてCanvasに描画 (object-fit: coverの再現)
+            const videoRatio = video.videoWidth / video.videoHeight;
+            let sx, sy, sw, sh;
+
+            if (videoRatio > screenRatio) {
+                // ビデオの方が横長（左右をカットしてスマホの縦長画面に合わせる）
+                sh = video.videoHeight;
+                sw = video.videoHeight * screenRatio;
+                sx = (video.videoWidth - sw) / 2;
+                sy = 0;
+            } else {
+                // ビデオの方が縦長（上下をカット）
+                sw = video.videoWidth;
+                sh = video.videoWidth / screenRatio;
+                sx = 0;
+                sy = (video.videoHeight - sh) / 2;
+            }
+
+            // インカメ（自撮り）の時は左右反転
             if (currentFacingMode === 'user') {
                 ctx.translate(canvas.width, 0);
                 ctx.scale(-1, 1);
             }
 
-            // 1. まず背景にカメラ映像を描画
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            // カメラの該当部分だけを抽出してCanvas全体に引き伸ばし描画
+            ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
 
-            // 反転状態を元に戻してフレームを描画（フレームは反転させない）
+            // 反転を戻す
             if (currentFacingMode === 'user') {
                 ctx.setTransform(1, 0, 0, 1, 0, 0);
             }
 
-            // 2. 【写真合成の修正】CSSの「object-fit: contain」の挙動をCanvas上で完全に再現
-            const canvasRatio = canvas.width / canvas.height;
+            // ② フレーム画像を「スマホ画面で見えている範囲」で切り抜いてCanvasに描画
             const frameRatio = frameImg.naturalWidth / frameImg.naturalHeight;
+            let fx, fy, fw, fh;
 
-            let drawWidth, drawHeight, offsetX, offsetY;
-
-            if (canvasRatio > frameRatio) {
-                // カメラ映像の方が横長な場合（フレームの上下をカメラの高さに合わせ、左右を中央寄せにする）
-                drawHeight = canvas.height;
-                drawWidth = canvas.height * frameRatio;
-                offsetX = (canvas.width - drawWidth) / 2;
-                offsetY = 0;
+            if (frameRatio > screenRatio) {
+                // フレーム画像の方が横長（左右カット）
+                fh = frameImg.naturalHeight;
+                fw = frameImg.naturalHeight * screenRatio;
+                fx = (frameImg.naturalWidth - fw) / 2;
+                fy = 0;
             } else {
-                // カメラ映像の方が縦長な場合（スマホ画面。フレームの横幅をカメラの幅に合わせ、上下を中央寄せにする）
-                drawWidth = canvas.width;
-                drawHeight = canvas.width / frameRatio;
-                offsetX = 0;
-                offsetY = (canvas.height - drawHeight) / 2;
+                // フレーム画像の方が縦長（上下カット）
+                fw = frameImg.naturalWidth;
+                fh = frameImg.naturalWidth / screenRatio;
+                fx = 0;
+                fy = (frameImg.naturalHeight - fh) / 2;
             }
 
-            // 計算したぴったりサイズでフレームを上に重ねて描画
-            ctx.drawImage(frameImg, offsetX, offsetY, drawWidth, drawHeight);
+            ctx.drawImage(frameImg, fx, fy, fw, fh, 0, 0, canvas.width, canvas.height);
 
+            // ③ ポップアップ表示
             try {
                 resultImg.src = canvas.toDataURL('image/png');
                 popup.style.display = 'flex';
@@ -190,11 +217,8 @@
             }
         });
 
-        // 🔄 カメラ切り替えボタンの処理
+        // 🔄 カメラ切り替え処理
         switchCameraBtn.addEventListener('click', () => {
-            const scene = document.querySelector('a-scene');
-            if (!scene || !scene.systems.arjs) return;
-
             currentFacingMode = (currentFacingMode === 'environment') ? 'user' : 'environment';
 
             const video = document.querySelector('video');
